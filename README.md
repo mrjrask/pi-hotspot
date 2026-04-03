@@ -14,6 +14,8 @@ The installer configures a Raspberry Pi to:
 - Share an Ethernet uplink (`eth0` by default) over Wi‑Fi (`wlan0` by default).
 - Create a WPA2 hotspot connection (default SSID `PiHotspot`).
 - Use NetworkManager shared IPv4 mode with a default gateway of `10.42.0.1`.
+- Persist hotspot profile settings in NetworkManager and auto-connect at boot.
+- Install a boot-start service that re-activates the hotspot during startup.
 - Install a watchdog service/timer that auto-recovers the hotspot.
 - Install a local health endpoint at `/health` (default `http://0.0.0.0:8787/health`).
 - Install a client-inspection helper script at `/usr/local/bin/pi-hotspot-clients.sh`.
@@ -105,6 +107,7 @@ Inspect logs:
 
 ```bash
 sudo journalctl -u NetworkManager -n 100 --no-pager
+sudo journalctl -u pi-hotspot-boot.service -n 50 --no-pager
 sudo journalctl -u pi-hotspot-watchdog.service -n 50 --no-pager
 sudo journalctl -u pi-hotspot-health.service -n 50 --no-pager
 ```

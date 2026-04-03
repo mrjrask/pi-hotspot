@@ -35,12 +35,14 @@ HEALTH_HOST="${HEALTH_HOST:-0.0.0.0}"
 HEALTH_PORT="${HEALTH_PORT:-8787}"
 
 WATCHDOG_SCRIPT="/usr/local/sbin/pi-hotspot-watchdog.sh"
+BOOT_SCRIPT="/usr/local/sbin/pi-hotspot-boot.sh"
 HEALTH_SCRIPT="/usr/local/sbin/pi-hotspot-health.py"
 CLIENTS_SCRIPT="/usr/local/bin/pi-hotspot-clients.sh"
 
 SYSTEMD_WATCHDOG_SERVICE="/etc/systemd/system/pi-hotspot-watchdog.service"
 SYSTEMD_WATCHDOG_TIMER="/etc/systemd/system/pi-hotspot-watchdog.timer"
 SYSTEMD_HEALTH_SERVICE="/etc/systemd/system/pi-hotspot-health.service"
+SYSTEMD_BOOT_SERVICE="/etc/systemd/system/pi-hotspot-boot.service"
 
 # -----------------------------
 # Logging helpers
@@ -191,6 +193,7 @@ create_hotspot_profile() {
         ipv6.method disabled \
         connection.interface-name "${WLAN_IF}" \
         connection.autoconnect yes \
+        connection.autoconnect-retries -1 \
         connection.autoconnect-priority 50
 
     if nmcli -t -f NAME connection show | grep -qx "Wired connection 1"; then
@@ -520,6 +523,83 @@ EOF
     systemctl enable --now pi-hotspot-health.service
 }
 
+write_boot_script() {
+    log "Writing boot-start script to ${BOOT_SCRIPT}..."
+
+    cat > "${BOOT_SCRIPT}" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+HOTSPOT_CONN="${HOTSPOT_CONN:-PiHotspot}"
+WLAN_IF="${WLAN_IF:-wlan0}"
+LOG_TAG="pi-hotspot-boot"
+MAX_RETRIES="${MAX_RETRIES:-10}"
+SLEEP_SECONDS="${SLEEP_SECONDS:-3}"
+
+log() {
+    logger -t "${LOG_TAG}" "$*"
+    printf '[BOOT] %s\n' "$*"
+}
+
+hotspot_active() {
+    nmcli -t -f NAME,DEVICE connection show --active 2>/dev/null | grep -q "^${HOTSPOT_CONN}:${WLAN_IF}$"
+}
+
+main() {
+    local attempt=1
+
+    while (( attempt <= MAX_RETRIES )); do
+        if hotspot_active; then
+            log "Hotspot '${HOTSPOT_CONN}' is already active on ${WLAN_IF}."
+            exit 0
+        fi
+
+        log "Attempt ${attempt}/${MAX_RETRIES}: activating hotspot '${HOTSPOT_CONN}' on ${WLAN_IF}..."
+        nmcli connection up "${HOTSPOT_CONN}" >/dev/null 2>&1 || true
+        sleep "${SLEEP_SECONDS}"
+
+        if hotspot_active; then
+            log "Hotspot '${HOTSPOT_CONN}' is active after boot."
+            exit 0
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    log "Failed to activate hotspot '${HOTSPOT_CONN}' after ${MAX_RETRIES} attempts."
+    exit 1
+}
+
+main "$@"
+EOF
+
+    chmod 755 "${BOOT_SCRIPT}"
+}
+
+write_boot_service() {
+    log "Writing systemd boot-start service..."
+
+    cat > "${SYSTEMD_BOOT_SERVICE}" <<EOF
+[Unit]
+Description=Ensure Raspberry Pi hotspot is active after boot
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+Environment=HOTSPOT_CONN=${HOTSPOT_CONN}
+Environment=WLAN_IF=${WLAN_IF}
+ExecStart=${BOOT_SCRIPT}
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+    systemctl daemon-reload
+    systemctl enable --now pi-hotspot-boot.service
+}
+
 write_systemd_units() {
     log "Writing systemd watchdog service and timer..."
 
@@ -582,6 +662,9 @@ show_status() {
     echo "Watchdog timer:"
     systemctl --no-pager --full status pi-hotspot-watchdog.timer || true
     echo
+    echo "Boot-start service:"
+    systemctl --no-pager --full status pi-hotspot-boot.service || true
+    echo
     echo "Health service:"
     systemctl --no-pager --full status pi-hotspot-health.service || true
     echo
@@ -626,9 +709,11 @@ main() {
     create_hotspot_profile
     bring_up_hotspot
     write_watchdog_script
+    write_boot_script
     write_health_script
     write_clients_script
     write_systemd_units
+    write_boot_service
     write_health_service
     post_check
     show_status
