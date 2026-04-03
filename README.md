@@ -97,6 +97,10 @@ See connected hotspot clients:
 /usr/local/bin/pi-hotspot-clients.sh
 ```
 
+> Note: On some Raspberry Pi OS / NetworkManager versions, DHCP leases may be stored in
+> different locations. The generated client script checks common lease paths automatically
+> and still shows connected station details even when no lease file is present.
+
 Watch clients continuously:
 
 ```bash
