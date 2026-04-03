@@ -434,7 +434,26 @@ write_clients_script() {
 #!/usr/bin/env bash
 
 WLAN_IF="${WLAN_IF:-wlan0}"
-LEASE_FILE="/var/lib/NetworkManager/dnsmasq-${WLAN_IF}.leases"
+LEASE_FILE_DEFAULT="/var/lib/NetworkManager/dnsmasq-${WLAN_IF}.leases"
+
+resolve_lease_file() {
+    local candidates=(
+        "${LEASE_FILE_DEFAULT}"
+        "/var/lib/NetworkManager/dnsmasq-shared-${WLAN_IF}.leases"
+        "/var/lib/NetworkManager/internal-dnsmasq-${WLAN_IF}.leases"
+        "/var/lib/misc/dnsmasq.leases"
+    )
+
+    local lease_file
+    for lease_file in "${candidates[@]}"; do
+        if [[ -f "${lease_file}" ]]; then
+            printf '%s\n' "${lease_file}"
+            return 0
+        fi
+    done
+
+    return 1
+}
 
 echo "=============================="
 echo " Hotspot Clients (${WLAN_IF})"
@@ -444,14 +463,20 @@ echo
 declare -A IPS
 declare -A HOSTS
 
-if [[ -f "$LEASE_FILE" ]]; then
+if LEASE_FILE="$(resolve_lease_file)"; then
+    echo "Using lease file: $LEASE_FILE"
     while read -r expiry mac ip host _; do
         mac=$(echo "$mac" | tr 'A-Z' 'a-z')
         IPS["$mac"]="$ip"
         HOSTS["$mac"]="$host"
     done < "$LEASE_FILE"
 else
-    echo "[WARN] Lease file not found: $LEASE_FILE"
+    echo "[WARN] Lease file not found. Checked:"
+    echo "  - $LEASE_FILE_DEFAULT"
+    echo "  - /var/lib/NetworkManager/dnsmasq-shared-${WLAN_IF}.leases"
+    echo "  - /var/lib/NetworkManager/internal-dnsmasq-${WLAN_IF}.leases"
+    echo "  - /var/lib/misc/dnsmasq.leases"
+    echo "[INFO] MAC/signal details will still be shown via 'iw'."
 fi
 
 if iw dev "$WLAN_IF" station dump >/dev/null 2>&1; then
