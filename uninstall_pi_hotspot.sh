@@ -4,12 +4,14 @@ set -euo pipefail
 HOTSPOT_CONN="${HOTSPOT_CONN:-PiHotspot}"
 
 WATCHDOG_SCRIPT="/usr/local/sbin/pi-hotspot-watchdog.sh"
+BOOT_SCRIPT="/usr/local/sbin/pi-hotspot-boot.sh"
 HEALTH_SCRIPT="/usr/local/sbin/pi-hotspot-health.py"
 CLIENTS_SCRIPT="/usr/local/bin/pi-hotspot-clients.sh"
 
 SYSTEMD_WATCHDOG_SERVICE="/etc/systemd/system/pi-hotspot-watchdog.service"
 SYSTEMD_WATCHDOG_TIMER="/etc/systemd/system/pi-hotspot-watchdog.timer"
 SYSTEMD_HEALTH_SERVICE="/etc/systemd/system/pi-hotspot-health.service"
+SYSTEMD_BOOT_SERVICE="/etc/systemd/system/pi-hotspot-boot.service"
 
 REMOVE_PACKAGES="${REMOVE_PACKAGES:-0}"
 
@@ -35,6 +37,9 @@ stop_and_disable_services() {
     systemctl stop pi-hotspot-watchdog.service 2>/dev/null || true
     systemctl disable pi-hotspot-watchdog.service 2>/dev/null || true
 
+    systemctl stop pi-hotspot-boot.service 2>/dev/null || true
+    systemctl disable pi-hotspot-boot.service 2>/dev/null || true
+
     systemctl stop pi-hotspot-health.service 2>/dev/null || true
     systemctl disable pi-hotspot-health.service 2>/dev/null || true
 }
@@ -44,6 +49,7 @@ remove_systemd_units() {
     rm -f "${SYSTEMD_WATCHDOG_SERVICE}"
     rm -f "${SYSTEMD_WATCHDOG_TIMER}"
     rm -f "${SYSTEMD_HEALTH_SERVICE}"
+    rm -f "${SYSTEMD_BOOT_SERVICE}"
     systemctl daemon-reload
     systemctl reset-failed || true
 }
@@ -51,6 +57,7 @@ remove_systemd_units() {
 remove_scripts() {
     log "Removing helper scripts..."
     rm -f "${WATCHDOG_SCRIPT}"
+    rm -f "${BOOT_SCRIPT}"
     rm -f "${HEALTH_SCRIPT}"
     rm -f "${CLIENTS_SCRIPT}"
 }
