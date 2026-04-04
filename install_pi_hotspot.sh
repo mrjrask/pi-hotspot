@@ -443,6 +443,11 @@ resolve_lease_file() {
         "/var/lib/NetworkManager/internal-dnsmasq-${WLAN_IF}.leases"
         "/var/lib/misc/dnsmasq.leases"
     )
+    local glob_candidates=(
+        "/var/lib/NetworkManager/*.leases"
+        "/run/NetworkManager/*.leases"
+        "/run/NetworkManager/dnsmasq*.leases"
+    )
 
     local lease_file
     for lease_file in "${candidates[@]}"; do
@@ -450,6 +455,16 @@ resolve_lease_file() {
             printf '%s\n' "${lease_file}"
             return 0
         fi
+    done
+
+    local pattern
+    for pattern in "${glob_candidates[@]}"; do
+        for lease_file in $pattern; do
+            [[ "${lease_file}" == "$pattern" ]] && continue
+            [[ ! -f "${lease_file}" ]] && continue
+            printf '%s\n' "${lease_file}"
+            return 0
+        done
     done
 
     return 1
@@ -476,6 +491,9 @@ else
     echo "  - /var/lib/NetworkManager/dnsmasq-shared-${WLAN_IF}.leases"
     echo "  - /var/lib/NetworkManager/internal-dnsmasq-${WLAN_IF}.leases"
     echo "  - /var/lib/misc/dnsmasq.leases"
+    echo "  - /var/lib/NetworkManager/*.leases"
+    echo "  - /run/NetworkManager/*.leases"
+    echo "  - /run/NetworkManager/dnsmasq*.leases"
     echo "[INFO] MAC/signal details will still be shown via 'iw'."
 fi
 
