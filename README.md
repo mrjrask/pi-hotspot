@@ -100,7 +100,8 @@ See connected hotspot clients:
 > Note: On some Raspberry Pi OS / NetworkManager versions, DHCP leases may be stored in
 > different locations (including `/var/lib/NetworkManager/*.leases` and
 > `/run/NetworkManager/*.leases`). The generated client script checks common lease paths
-> automatically and still shows connected station details even when no lease file is present.
+> automatically, and it falls back to `ip neigh` (ARP/neighbor table) to recover client IPs
+> even when no lease file is present.
 
 Watch clients continuously:
 

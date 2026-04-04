@@ -436,6 +436,32 @@ write_clients_script() {
 WLAN_IF="${WLAN_IF:-wlan0}"
 LEASE_FILE_DEFAULT="/var/lib/NetworkManager/dnsmasq-${WLAN_IF}.leases"
 
+ingest_lease_file() {
+    local lease_file="$1"
+    while read -r expiry mac ip host _; do
+        [[ -z "${mac}" || -z "${ip}" ]] && continue
+        mac="$(echo "${mac}" | tr 'A-Z' 'a-z')"
+        IPS["${mac}"]="${ip}"
+        if [[ -n "${host:-}" && "${host}" != "*" ]]; then
+            HOSTS["${mac}"]="${host}"
+        fi
+    done < "${lease_file}"
+}
+
+ingest_ip_neigh() {
+    while read -r ip _ mac_addr _ state _; do
+        [[ -z "${ip}" || -z "${mac_addr}" ]] && continue
+        [[ "${mac_addr}" == "00:00:00:00:00:00" ]] && continue
+        [[ ! "${mac_addr}" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] && continue
+
+        local mac_lc
+        mac_lc="$(echo "${mac_addr}" | tr 'A-Z' 'a-z')"
+        if [[ -z "${IPS[${mac_lc}]:-}" ]]; then
+            IPS["${mac_lc}"]="${ip}"
+        fi
+    done < <(ip neigh show dev "${WLAN_IF}" 2>/dev/null || true)
+}
+
 resolve_lease_file() {
     local candidates=(
         "${LEASE_FILE_DEFAULT}"
@@ -447,6 +473,9 @@ resolve_lease_file() {
         "/var/lib/NetworkManager/*.leases"
         "/run/NetworkManager/*.leases"
         "/run/NetworkManager/dnsmasq*.leases"
+        "/run/NetworkManager/*dnsmasq*.lease*"
+        "/var/lib/misc/*.leases"
+        "/tmp/dnsmasq*.leases"
     )
 
     local lease_file
@@ -480,11 +509,7 @@ declare -A HOSTS
 
 if LEASE_FILE="$(resolve_lease_file)"; then
     echo "Using lease file: $LEASE_FILE"
-    while read -r expiry mac ip host _; do
-        mac=$(echo "$mac" | tr 'A-Z' 'a-z')
-        IPS["$mac"]="$ip"
-        HOSTS["$mac"]="$host"
-    done < "$LEASE_FILE"
+    ingest_lease_file "$LEASE_FILE"
 else
     echo "[WARN] Lease file not found. Checked:"
     echo "  - $LEASE_FILE_DEFAULT"
@@ -494,8 +519,13 @@ else
     echo "  - /var/lib/NetworkManager/*.leases"
     echo "  - /run/NetworkManager/*.leases"
     echo "  - /run/NetworkManager/dnsmasq*.leases"
-    echo "[INFO] MAC/signal details will still be shown via 'iw'."
+    echo "  - /run/NetworkManager/*dnsmasq*.lease*"
+    echo "  - /var/lib/misc/*.leases"
+    echo "  - /tmp/dnsmasq*.leases"
+    echo "[INFO] Falling back to ARP/neighbor table for IP lookup."
 fi
+
+ingest_ip_neigh
 
 if iw dev "$WLAN_IF" station dump >/dev/null 2>&1; then
     station_output="$(iw dev "$WLAN_IF" station dump)"
