@@ -15,8 +15,8 @@ set -euo pipefail
 # -----------------------------
 # User-configurable defaults
 # -----------------------------
-SSID="${SSID:-PiHotspot}"
-PASSWORD="${PASSWORD:-ChangeMe123!}"
+SSID="${SSID:-}"
+PASSWORD="${PASSWORD:-}"
 COUNTRY="${COUNTRY:-US}"
 
 ETH_IF="${ETH_IF:-eth0}"
@@ -67,6 +67,55 @@ require_root() {
     if [[ "${EUID}" -ne 0 ]]; then
         err "Run this script with sudo or as root."
     fi
+}
+
+require_interactive_or_env() {
+    if [[ ! -t 0 ]] && { [[ -z "${SSID}" ]] || [[ -z "${PASSWORD}" ]]; }; then
+        err "No TTY detected for interactive prompts. Set SSID and PASSWORD environment variables for non-interactive installs."
+    fi
+}
+
+prompt_for_ssid() {
+    if [[ -z "${SSID}" ]]; then
+        read -r -p "Enter hotspot SSID (network name): " SSID
+    fi
+
+    if [[ -z "${SSID}" ]]; then
+        err "SSID cannot be empty."
+    fi
+
+    if [[ "${#SSID}" -gt 32 ]]; then
+        err "SSID must be 32 characters or fewer."
+    fi
+}
+
+prompt_for_password() {
+    if [[ -n "${PASSWORD}" ]]; then
+        if [[ "${#PASSWORD}" -lt 8 ]]; then
+            err "PASSWORD must be at least 8 characters long."
+        fi
+        return
+    fi
+
+    local pass1 pass2
+    while true; do
+        read -rs -p "Enter hotspot password (min 8 characters): " pass1
+        echo
+        if [[ "${#pass1}" -lt 8 ]]; then
+            warn "Password must be at least 8 characters. Try again."
+            continue
+        fi
+
+        read -rs -p "Confirm hotspot password: " pass2
+        echo
+        if [[ "${pass1}" != "${pass2}" ]]; then
+            warn "Passwords do not match. Try again."
+            continue
+        fi
+
+        PASSWORD="${pass1}"
+        break
+    done
 }
 
 validate_inputs() {
@@ -771,6 +820,9 @@ post_check() {
 
 main() {
     require_root
+    require_interactive_or_env
+    prompt_for_ssid
+    prompt_for_password
     validate_inputs
     check_interfaces
     install_dependencies
