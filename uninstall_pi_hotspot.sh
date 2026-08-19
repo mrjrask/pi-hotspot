@@ -84,7 +84,7 @@ restart_networkmanager() {
 optionally_remove_packages() {
     if [[ "${REMOVE_PACKAGES}" == "1" ]]; then
         log "Removing hotspot-related packages..."
-        apt-get remove -y network-manager dnsmasq wireless-regdb iw rfkill python3 || true
+        apt-get remove -y network-manager dnsmasq wireless-regdb iw rfkill || true
         apt-get autoremove -y || true
     else
         log "Leaving installed packages in place."
