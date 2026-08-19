@@ -9,6 +9,9 @@ This project provides two hotspot variants, each with its own installer/uninstal
 - `install_pi_hotspot_bridge.sh` / `uninstall_pi_hotspot_bridge.sh` — bridged hotspot. The
   Pi bridges Wi‑Fi and Ethernet at layer 2, so Wi‑Fi clients join the same subnet as the
   Ethernet uplink and get their DHCP lease from the upstream router.
+- `reinstall_pi_hotspot_dependencies.sh` — restores the apt packages either uninstaller can
+  remove (see [Uninstall](#uninstall)). Useful for recovering from a `REMOVE_PACKAGES=1`
+  uninstall that took out something you still needed.
 
 Both installers prompt interactively for the hotspot SSID and password — there is no
 shipped default network name or password.
@@ -207,24 +210,56 @@ sudo journalctl -u pi-hotspot-bridge-health.service -n 50 --no-pager
 
 ## Uninstall
 
-Basic uninstall (keeps packages installed):
+Basic uninstall (keeps packages installed) — always safe, no confirmation needed:
 
 ```bash
 sudo bash uninstall_pi_hotspot.sh          # shared mode
 sudo bash uninstall_pi_hotspot_bridge.sh   # bridge mode
 ```
 
-Uninstall and remove installed packages too:
+This removes only what the installer created: the hotspot NetworkManager connection(s),
+the watchdog/boot/health systemd units, and the helper scripts under `/usr/local/`.
+
+### Removing packages too
+
+Package removal is opt-in, requires typed confirmation (`REMOVE`) unless `FORCE=1` is
+set, and is split into two tiers so one flag can't take down more than you asked for:
 
 ```bash
+# Removes dnsmasq (shared mode only), wireless-regdb, iw, rfkill
 sudo REMOVE_PACKAGES=1 bash uninstall_pi_hotspot.sh          # shared mode
 sudo REMOVE_PACKAGES=1 bash uninstall_pi_hotspot_bridge.sh   # bridge mode
+
+# Also removes network-manager — the Pi's active network stack. Only do this if
+# you understand you may lose SSH/network access immediately and need physical
+# console access to recover.
+sudo REMOVE_PACKAGES=1 REMOVE_NETWORK_MANAGER=1 bash uninstall_pi_hotspot.sh
+
+# Non-interactive/scripted removal (skips the typed REMOVE confirmation):
+sudo REMOVE_PACKAGES=1 FORCE=1 bash uninstall_pi_hotspot.sh
 ```
 
-`REMOVE_PACKAGES=1` removes `network-manager`, `dnsmasq` (shared mode only), `wireless-regdb`,
-and `iw`/`rfkill`. It intentionally leaves `python3` installed, since it's a base system
-dependency on Raspberry Pi OS and removing it can drag down unrelated tooling via apt's
-dependency resolution.
+`python3` is never removed by either uninstaller — it's a base system dependency (used by
+apt/dpkg triggers, `raspi-config`, etc.) and removing it can cascade into removing unrelated
+parts of the OS. `apt-get autoremove` is also never run automatically, since it can remove
+other packages that merely stop being "required" once these are gone; opt in with
+`AUTOREMOVE=1` if you specifically want that cleanup.
+
+### Recovering removed dependencies
+
+If package removal (or anything else) leaves the Pi missing packages this project needs,
+reinstall them with:
+
+```bash
+sudo bash reinstall_pi_hotspot_dependencies.sh
+```
+
+This reinstalls `network-manager`, `dnsmasq`, `wireless-regdb`, `iw`, `rfkill`, and `python3`,
+re-enables and restarts NetworkManager, and re-disables the standalone `dnsmasq` service so it
+doesn't conflict with NetworkManager-managed DHCP/NAT. It's safe to run whether the packages
+are currently missing or already installed. Afterwards, re-run `install_pi_hotspot.sh` (or
+`install_pi_hotspot_bridge.sh`) to recreate the hotspot connection and helper scripts/services
+if the uninstaller removed those too.
 
 ## Notes
 
