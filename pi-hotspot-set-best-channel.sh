@@ -42,7 +42,9 @@ require_connection() {
 resolve_band() {
     if [[ -z "${WIFI_BAND}" ]]; then
         WIFI_BAND="$(nmcli -g 802-11-wireless.band connection show "${HOTSPOT_CONN}" 2>/dev/null || true)"
-        [[ -z "${WIFI_BAND}" ]] && WIFI_BAND="bg"
+        if [[ -z "${WIFI_BAND}" ]]; then
+            WIFI_BAND="bg"
+        fi
     fi
 }
 
