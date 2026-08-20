@@ -4,6 +4,8 @@ A simple Raspberry Pi hotspot setup for **Ethernet ➜ Wi‑Fi sharing** using N
 
 - `install_pi_hotspot.sh` / `uninstall_pi_hotspot.sh` — NAT/shared-mode hotspot. The Pi
   runs its own DHCP server and routes/NATs Wi‑Fi clients onto the Ethernet uplink.
+- `pi-hotspot-set-best-channel.sh` — re-scans and switches an already-installed hotspot
+  to the least congested Wi‑Fi channel (see [Choosing a Wi‑Fi channel](#choosing-a-wi-fi-channel)).
 
 The installer prompts interactively for the hotspot SSID, password, and whether the
 network should be visible or hidden — there is no shipped default network name or
@@ -14,6 +16,8 @@ password.
 `install_pi_hotspot.sh` configures a Raspberry Pi to:
 
 - Share an Ethernet uplink (`eth0` by default) over Wi‑Fi (`wlan0` by default).
+- Scan nearby Wi‑Fi networks and automatically pick the least congested channel
+  (unless `WIFI_CHANNEL` is set explicitly).
 - Create a WPA2 hotspot connection, visible or hidden as chosen at install time.
 - Use NetworkManager shared IPv4 mode with a default gateway of `10.42.0.1`.
 - Persist hotspot profile settings in NetworkManager and auto-connect at boot.
@@ -63,7 +67,7 @@ sudo \
   HOTSPOT_IP_CIDR="10.42.0.1/24" \
   HOTSPOT_GATEWAY_IP="10.42.0.1" \
   WIFI_BAND="bg" \
-  WIFI_CHANNEL="6" \
+  WIFI_CHANNEL="auto" \
   WATCHDOG_INTERVAL="30s" \
   HEALTH_HOST="0.0.0.0" \
   HEALTH_PORT="8787" \
@@ -82,10 +86,40 @@ sudo \
 - `HOTSPOT_CONN` (default: `PiHotspot`)
 - `HOTSPOT_IP_CIDR` (default: `10.42.0.1/24`)
 - `WIFI_BAND` (default: `bg`)
-- `WIFI_CHANNEL` (default: `6`)
+- `WIFI_CHANNEL` (default: `auto` — scans and picks the least congested channel;
+  set an explicit channel number to disable scanning)
 - `WATCHDOG_INTERVAL` (default: `30s`)
 - `HEALTH_HOST` (default: `0.0.0.0`)
 - `HEALTH_PORT` (default: `8787`)
+
+## Choosing a Wi‑Fi channel
+
+By default (`WIFI_CHANNEL=auto`), the installer scans nearby Wi‑Fi networks with
+`nmcli` and picks the least congested non-overlapping channel for `WIFI_BAND`:
+`1`, `6`, or `11` for `bg` (2.4GHz), or one of `36`, `40`, `44`, `48`, `149`, `153`,
+`157`, `161`, `165` for `a` (5GHz). Each candidate is scored by how many nearby
+networks are on it (or, on 2.4GHz, within 2 channels of it, since 20MHz channels
+overlap with their neighbors); the lowest-scoring channel is used. If the scan
+finds no nearby networks, it falls back to the first candidate (`1` for `bg`,
+`36` for `a`). Set `WIFI_CHANNEL` to a specific number to skip scanning entirely.
+
+To re-scan and switch an **already-installed** hotspot to the current best
+channel (e.g. after new neighboring networks appear), run:
+
+```bash
+sudo bash pi-hotspot-set-best-channel.sh
+```
+
+This briefly takes the hotspot down to scan, then brings it back up on the best
+channel it found (or leaves it as-is if it's already on the best channel). It
+reads `HOTSPOT_CONN` and `WLAN_IF` the same way the installer does, and infers
+`WIFI_BAND` from the existing connection unless overridden:
+
+```bash
+sudo HOTSPOT_CONN="PiHotspot" WLAN_IF="wlan0" WIFI_BAND="bg" bash pi-hotspot-set-best-channel.sh
+```
+
+Consider running it periodically (e.g. via cron) if the RF environment changes often.
 
 ## Health and operations
 

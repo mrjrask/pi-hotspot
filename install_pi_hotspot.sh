@@ -30,7 +30,9 @@ HOTSPOT_IP_CIDR="${HOTSPOT_IP_CIDR:-10.42.0.1/24}"
 HOTSPOT_GATEWAY_IP="${HOTSPOT_GATEWAY_IP:-10.42.0.1}"
 
 WIFI_BAND="${WIFI_BAND:-bg}"
-WIFI_CHANNEL="${WIFI_CHANNEL:-6}"
+# "auto" scans for nearby Wi-Fi networks and picks the least congested channel
+# for WIFI_BAND. Set an explicit channel number to skip scanning.
+WIFI_CHANNEL="${WIFI_CHANNEL:-auto}"
 
 WATCHDOG_INTERVAL="${WATCHDOG_INTERVAL:-30s}"
 
@@ -233,6 +235,66 @@ disconnect_wlan_if_needed() {
     log "Disconnecting ${WLAN_IF} before hotspot creation..."
     nmcli device disconnect "${WLAN_IF}" 2>/dev/null || true
     sleep 2
+}
+
+# -----------------------------
+# Wi-Fi channel scanning
+# -----------------------------
+# Picks the least congested channel for WIFI_BAND by scanning nearby networks
+# with nmcli and scoring each candidate channel by how many nearby networks
+# are on it (or, for 2.4GHz, within 2 channels of it, since 20MHz channels
+# overlap with their neighbors).
+select_best_wifi_channel() {
+    if [[ "${WIFI_CHANNEL}" != "auto" ]]; then
+        log "Using manually specified Wi-Fi channel ${WIFI_CHANNEL}."
+        return
+    fi
+
+    log "Scanning nearby Wi-Fi networks on ${WLAN_IF} to pick the least congested channel..."
+
+    local candidates=()
+    if [[ "${WIFI_BAND}" == "a" ]]; then
+        candidates=(36 40 44 48 149 153 157 161 165)
+    else
+        candidates=(1 6 11)
+    fi
+
+    local scan_output
+    scan_output="$(nmcli -t -f CHAN device wifi list ifname "${WLAN_IF}" --rescan yes 2>/dev/null | grep -E '^[0-9]+$' || true)"
+
+    if [[ -z "${scan_output}" ]]; then
+        WIFI_CHANNEL="${candidates[0]}"
+        warn "Wi-Fi scan found no nearby networks; defaulting to channel ${WIFI_CHANNEL}."
+        return
+    fi
+
+    local detected_channels=()
+    local ch
+    while IFS= read -r ch; do
+        [[ -n "${ch}" ]] && detected_channels+=("${ch}")
+    done <<< "${scan_output}"
+
+    local best_channel="" best_score="" candidate score diff
+    for candidate in "${candidates[@]}"; do
+        score=0
+        for ch in "${detected_channels[@]}"; do
+            if [[ "${WIFI_BAND}" == "a" ]]; then
+                (( ch == candidate )) && score=$((score + 1))
+            else
+                diff=$(( ch - candidate ))
+                (( diff < 0 )) && diff=$(( -diff ))
+                (( diff <= 2 )) && score=$((score + 1))
+            fi
+        done
+
+        if [[ -z "${best_score}" ]] || (( score < best_score )); then
+            best_score="${score}"
+            best_channel="${candidate}"
+        fi
+    done
+
+    WIFI_CHANNEL="${best_channel}"
+    log "Selected Wi-Fi channel ${WIFI_CHANNEL} for band '${WIFI_BAND}' (nearby-network score ${best_score}; candidates: ${candidates[*]})."
 }
 
 # -----------------------------
@@ -791,6 +853,8 @@ show_status() {
     echo "Password:      ${PASSWORD}"
     echo "Visibility:    $([[ "${HIDDEN}" == "yes" ]] && echo "hidden" || echo "visible")"
     echo "Wi-Fi IF:      ${WLAN_IF}"
+    echo "Wi-Fi band:    ${WIFI_BAND}"
+    echo "Wi-Fi channel: ${WIFI_CHANNEL}"
     echo "Uplink IF:     ${ETH_IF}"
     echo "Gateway:       ${HOTSPOT_GATEWAY_IP}"
     echo "Health URL:    http://${HEALTH_HOST}:${HEALTH_PORT}/health"
@@ -856,6 +920,7 @@ main() {
     ensure_nm_manages_interfaces
     remove_existing_hotspot_profiles
     disconnect_wlan_if_needed
+    select_best_wifi_channel
     create_hotspot_profile
     bring_up_hotspot
     write_watchdog_script
