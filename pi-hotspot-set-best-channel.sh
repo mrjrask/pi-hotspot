@@ -59,8 +59,11 @@ select_best_wifi_channel() {
         candidates=(1 6 11)
     fi
 
+    log "Networks seen during scan:"
+    nmcli -f SSID,CHAN,SIGNAL,BSSID device wifi list ifname "${WLAN_IF}" --rescan yes 2>/dev/null | sed 's/^/    /' || true
+
     local scan_output
-    scan_output="$(nmcli -t -f CHAN device wifi list ifname "${WLAN_IF}" --rescan yes 2>/dev/null | grep -E '^[0-9]+$' || true)"
+    scan_output="$(nmcli -t -f CHAN device wifi list ifname "${WLAN_IF}" 2>/dev/null | grep -E '^[0-9]+$' || true)"
 
     if [[ -z "${scan_output}" ]]; then
         BEST_CHANNEL="${candidates[0]}"
@@ -74,7 +77,10 @@ select_best_wifi_channel() {
         [[ -n "${ch}" ]] && detected_channels+=("${ch}")
     done <<< "${scan_output}"
 
+    log "Detected ${#detected_channels[@]} network(s), on channels: ${detected_channels[*]}"
+
     local best_channel="" best_score="" candidate score diff
+    log "Congestion analysis (candidate channel : interfering networks):"
     for candidate in "${candidates[@]}"; do
         score=0
         for ch in "${detected_channels[@]}"; do
@@ -86,6 +92,8 @@ select_best_wifi_channel() {
                 (( diff <= 2 )) && score=$((score + 1))
             fi
         done
+
+        printf '    channel %-3s : %s\n' "${candidate}" "${score}"
 
         if [[ -z "${best_score}" ]] || (( score < best_score )); then
             best_score="${score}"
@@ -113,7 +121,7 @@ apply_channel() {
     log "Bringing hotspot back up on channel ${BEST_CHANNEL}..."
     nmcli connection up "${HOTSPOT_CONN}" || err "Failed to reactivate hotspot '${HOTSPOT_CONN}' on channel ${BEST_CHANNEL}."
 
-    log "Hotspot '${HOTSPOT_CONN}' is now on channel ${BEST_CHANNEL} (band '${WIFI_BAND}')."
+    log "Summary: '${HOTSPOT_CONN}' band '${WIFI_BAND}' channel ${current_channel:-unknown} -> ${BEST_CHANNEL}."
 }
 
 main() {
