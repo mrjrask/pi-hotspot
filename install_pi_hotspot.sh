@@ -596,6 +596,33 @@ ingest_ip_neigh() {
     done < <(ip neigh show dev "${WLAN_IF}" 2>/dev/null || true)
 }
 
+ingest_nm_journal() {
+    local line ip mac host mac_lc
+
+    command -v journalctl >/dev/null 2>&1 || return 1
+
+    # NetworkManager's private dnsmasq does not create a lease file on every
+    # release/configuration.  DHCPACK messages still contain the assigned IP,
+    # client MAC, and (when supplied) hostname.  Read oldest-to-newest so a
+    # renewed lease replaces stale data for the same MAC address.
+    while IFS= read -r line; do
+        if [[ "${line}" =~ DHCPACK\(${WLAN_IF}\)[[:space:]]+([^[:space:]]+)[[:space:]]+(([[:xdigit:]]{2}:){5}[[:xdigit:]]{2})([[:space:]]+([^[:space:]]+))? ]]; then
+            ip="${BASH_REMATCH[1]}"
+            mac="${BASH_REMATCH[2]}"
+            host="${BASH_REMATCH[5]:-}"
+            mac_lc="$(echo "${mac}" | tr 'A-Z' 'a-z')"
+            IPS["${mac_lc}"]="${ip}"
+            if [[ -n "${host}" && "${host}" != "*" ]]; then
+                HOSTS["${mac_lc}"]="${host}"
+            else
+                # A newer anonymous ACK supersedes any hostname obtained from
+                # an older journal entry or the lease-file fallback.
+                unset "HOSTS[${mac_lc}]"
+            fi
+        fi
+    done < <(journalctl -u NetworkManager.service -b --no-pager -o cat 2>/dev/null || true)
+}
+
 resolve_lease_file() {
     local candidates=(
         "${LEASE_FILE_DEFAULT}"
@@ -614,7 +641,7 @@ resolve_lease_file() {
 
     local lease_file
     for lease_file in "${candidates[@]}"; do
-        if [[ -f "${lease_file}" ]]; then
+        if [[ -f "${lease_file}" && -r "${lease_file}" ]]; then
             printf '%s\n' "${lease_file}"
             return 0
         fi
@@ -624,7 +651,7 @@ resolve_lease_file() {
     for pattern in "${glob_candidates[@]}"; do
         for lease_file in $pattern; do
             [[ "${lease_file}" == "$pattern" ]] && continue
-            [[ ! -f "${lease_file}" ]] && continue
+            [[ ! -f "${lease_file}" || ! -r "${lease_file}" ]] && continue
             printf '%s\n' "${lease_file}"
             return 0
         done
@@ -641,25 +668,33 @@ echo
 declare -A IPS
 declare -A HOSTS
 
+metadata_source=""
+
 if LEASE_FILE="$(resolve_lease_file)"; then
-    echo "Using lease file: $LEASE_FILE"
     ingest_lease_file "$LEASE_FILE"
-else
-    echo "[WARN] Lease file not found. Checked:"
-    echo "  - $LEASE_FILE_DEFAULT"
-    echo "  - /var/lib/NetworkManager/dnsmasq-shared-${WLAN_IF}.leases"
-    echo "  - /var/lib/NetworkManager/internal-dnsmasq-${WLAN_IF}.leases"
-    echo "  - /var/lib/misc/dnsmasq.leases"
-    echo "  - /var/lib/NetworkManager/*.leases"
-    echo "  - /run/NetworkManager/*.leases"
-    echo "  - /run/NetworkManager/dnsmasq*.leases"
-    echo "  - /run/NetworkManager/*dnsmasq*.lease*"
-    echo "  - /var/lib/misc/*.leases"
-    echo "  - /tmp/dnsmasq*.leases"
-    echo "[INFO] Falling back to ARP/neighbor table for IP lookup."
+    if (( ${#IPS[@]} > 0 )); then
+        echo "Using lease file: $LEASE_FILE"
+        metadata_source="lease file"
+    else
+        echo "[INFO] Lease file contained no usable records: $LEASE_FILE"
+    fi
+fi
+
+# Always supplement lease data from the journal. A discovered lease file can be
+# empty, stale, unreadable, or belong to a different NetworkManager interface;
+# current DHCPACK records should win when both sources contain the same MAC.
+ingest_nm_journal
+if [[ -z "${metadata_source}" && ${#IPS[@]} -gt 0 ]]; then
+    echo "[INFO] No usable lease file data found; using NetworkManager's DHCP journal."
+    metadata_source="NetworkManager journal"
 fi
 
 ingest_ip_neigh
+
+if [[ -z "${metadata_source}" && ${#IPS[@]} -eq 0 ]]; then
+    echo "[WARN] No DHCP lease metadata was readable."
+    echo "[INFO] Client associations will still be shown; IP and host may be unknown."
+fi
 
 if iw dev "$WLAN_IF" station dump >/dev/null 2>&1; then
     station_output="$(iw dev "$WLAN_IF" station dump)"
@@ -673,7 +708,10 @@ if iw dev "$WLAN_IF" station dump >/dev/null 2>&1; then
         /signal:/ {signal=$2}
         /connected time:/ {time=$3}
         /^$/ {
-            printf "%s|%s|%s\n", mac, signal, time
+            if (mac != "") {
+                printf "%s|%s|%s\n", mac, signal, time
+            }
+            mac=""; signal=""; time=""
         }
         END {
             if (mac != "" && signal != "" && time != "") {

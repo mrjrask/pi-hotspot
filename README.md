@@ -141,11 +141,12 @@ See connected hotspot clients:
 /usr/local/bin/pi-hotspot-clients.sh
 ```
 
-> On some Raspberry Pi OS / NetworkManager versions, DHCP leases may be stored in
-> different locations (including `/var/lib/NetworkManager/*.leases` and
-> `/run/NetworkManager/*.leases`). The generated client script checks common lease paths
-> automatically, and it falls back to `ip neigh` (ARP/neighbor table) to recover client IPs
-> even when no lease file is present.
+> On some Raspberry Pi OS / NetworkManager versions, its private dnsmasq does not leave a
+> readable lease file. The generated client script checks common lease paths first, then
+> recovers DHCP assignments from the current boot's NetworkManager journal and supplements
+> them with `ip neigh` (ARP/neighbor table) data. Run the helper with `sudo` if your user is
+> not allowed to read the system journal. A missing lease file by itself does not mean the
+> hotspot or DHCP server is broken.
 
 Watch clients continuously:
 
