@@ -614,6 +614,10 @@ ingest_nm_journal() {
             IPS["${mac_lc}"]="${ip}"
             if [[ -n "${host}" && "${host}" != "*" ]]; then
                 HOSTS["${mac_lc}"]="${host}"
+            else
+                # A newer anonymous ACK supersedes any hostname obtained from
+                # an older journal entry or the lease-file fallback.
+                unset "HOSTS[${mac_lc}]"
             fi
         fi
     done < <(journalctl -u NetworkManager.service -b --no-pager -o cat 2>/dev/null || true)
