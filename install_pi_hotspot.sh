@@ -637,7 +637,7 @@ resolve_lease_file() {
 
     local lease_file
     for lease_file in "${candidates[@]}"; do
-        if [[ -f "${lease_file}" ]]; then
+        if [[ -f "${lease_file}" && -r "${lease_file}" ]]; then
             printf '%s\n' "${lease_file}"
             return 0
         fi
@@ -647,7 +647,7 @@ resolve_lease_file() {
     for pattern in "${glob_candidates[@]}"; do
         for lease_file in $pattern; do
             [[ "${lease_file}" == "$pattern" ]] && continue
-            [[ ! -f "${lease_file}" ]] && continue
+            [[ ! -f "${lease_file}" || ! -r "${lease_file}" ]] && continue
             printf '%s\n' "${lease_file}"
             return 0
         done
@@ -667,15 +667,22 @@ declare -A HOSTS
 metadata_source=""
 
 if LEASE_FILE="$(resolve_lease_file)"; then
-    echo "Using lease file: $LEASE_FILE"
     ingest_lease_file "$LEASE_FILE"
-    metadata_source="lease file"
-else
-    ingest_nm_journal
     if (( ${#IPS[@]} > 0 )); then
-        echo "[INFO] No lease file found; using NetworkManager's DHCP journal."
-        metadata_source="NetworkManager journal"
+        echo "Using lease file: $LEASE_FILE"
+        metadata_source="lease file"
+    else
+        echo "[INFO] Lease file contained no usable records: $LEASE_FILE"
     fi
+fi
+
+# Always supplement lease data from the journal. A discovered lease file can be
+# empty, stale, unreadable, or belong to a different NetworkManager interface;
+# current DHCPACK records should win when both sources contain the same MAC.
+ingest_nm_journal
+if [[ -z "${metadata_source}" && ${#IPS[@]} -gt 0 ]]; then
+    echo "[INFO] No usable lease file data found; using NetworkManager's DHCP journal."
+    metadata_source="NetworkManager journal"
 fi
 
 ingest_ip_neigh
